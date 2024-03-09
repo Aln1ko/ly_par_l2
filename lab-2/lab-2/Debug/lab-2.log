@@ -1,0 +1,9 @@
+﻿  lab-2.cpp
+D:\Лабораторные\паралельки\lab-2\lab-2\lab-2\lab-2.cpp(81,76): warning C4244: аргумент: преобразование "const __int64" в "int", возможна потеря данных
+D:\Лабораторные\паралельки\lab-2\lab-2\lab-2\lab-2.cpp(150): message : выполняется компиляция ссылки на экземпляр шаблон функции "void ThreadPool::enqueue<void(__cdecl &)(int,int),int&,_Rep>(std::chrono::seconds,F,int &,_Rep &&)"
+          with
+          [
+              _Rep=__int64,
+              F=void (__cdecl &)(int,int)
+          ]
+  lab-2.vcxproj -> D:\Лабораторные\паралельки\lab-2\lab-2\Debug\lab-2.exe

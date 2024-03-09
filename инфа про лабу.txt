@@ -1,0 +1,178 @@
+у пула потоков 2 очереди на испольнение первой 
+выделенно 3 потока на вторую - 1
+задания в 1 очередь добавляются через 1 интерфейс
+у пользователя нет прямого доступа к очереди
+задания у которых время исполнения меньше идут вперед
+очереди
+если задача из 1 очереди не начала выполняться в 
+течении времени = 2*времени на испольнение задачи
+она идет во вторую очередь
+задача начинает сразу испольняться когда есть свободный
+поток
+задача заниммает случайное время от 5 до 10 секунд
+
+
+
+#include <iostream>
+#include <vector>
+#include <queue>
+#include <thread>
+#include <functional>
+#include <mutex>
+#include <condition_variable>
+#include <random>
+#include <chrono>
+
+std::mutex mut;
+
+struct Task {
+    std::chrono::seconds priority;
+    std::function<void()> function;
+    std::chrono::steady_clock::time_point creationTime;
+
+    Task() : creationTime(std::chrono::steady_clock::now()) {}
+
+    Task(std::chrono::seconds p, std::function<void()> f)
+        : priority(p), function(std::move(f)), creationTime(std::chrono::steady_clock::now()) {}
+
+    bool time_to_postpone() const {
+        std::chrono::steady_clock::time_point currentTime = std::chrono::steady_clock::now();
+        std::chrono::duration<double> elapsedTime = currentTime - creationTime;
+        if (elapsedTime >= 2 * priority)
+            return true;
+        else
+            return false;
+    }
+
+    bool operator<(const Task& other) const {
+        return priority < other.priority;
+    }
+
+    bool operator>(const Task& other) const {
+        return priority > other.priority;
+    }
+};
+
+class ThreadPool {
+public:
+    ThreadPool(size_t numThreads, size_t numThreads_1) : stop(false) {
+        for (size_t i = 0; i < numThreads; ++i) {
+            threads.emplace_back([this] {
+                while (true) {
+                    Task task;
+                    {
+                        std::unique_lock<std::mutex> lock(mutex);
+                        condition.wait(lock, [this] { return stop || !tasks.empty(); });
+                        if (stop && tasks.empty()) return;
+                        task = std::move(tasks.top());
+                        tasks.pop();
+                    }
+                    task.function();
+                }
+                });
+        }
+
+        for (size_t i = 0; i < numThreads_1; ++i) {
+            threads.emplace_back([this] {
+                while (true) {
+                    Task task;
+                    {
+                        std::unique_lock<std::mutex> lock(mutex_1);
+                        condition_1.wait(lock, [this] { return stop || !tasks_1.empty(); });
+                        if (stop && tasks_1.empty()) return;
+                        task = std::move(tasks_1.front());
+                        tasks_1.pop();
+                    }
+                    task.function();
+                }
+                });
+        }
+    }
+
+    template <class F, class... Args>
+    void enqueue(std::chrono::seconds priority, F&& f, Args&&... args) {
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            std::function<void()> function = [=]() { std::move(f)(std::move(args)...); };
+            transfer_tasks();
+            tasks.emplace(priority, std::move(function));
+        }
+        condition.notify_one();
+    }
+
+    void transfer_tasks() {
+        std::priority_queue<Task, std::vector<Task>, std::greater<Task>> new_tasks;
+        while (!tasks.empty()) {
+            const Task& task = tasks.top();
+            if (task.time_to_postpone()) {
+                std::unique_lock<std::mutex> lock(mutex_1);
+                tasks_1.push(task);
+            }
+                
+            else {
+                new_tasks.push(task);
+            }
+            tasks.pop();
+        }
+        tasks = std::move(new_tasks);
+        condition_1.notify_one();
+    }
+     
+    ~ThreadPool() {
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            stop = true;
+        }
+        condition.notify_all();
+        condition_1.notify_all();
+        for (std::thread& thread : threads) {
+            thread.join();
+        }
+
+      //  std::cout << "Tasks remaining in tasks queue: " << tasks.size() << std::endl;
+        //std::cout << "Tasks remaining in tasks_1 queue: " << tasks_1.size() << std::endl;
+    }
+
+
+private:
+    std::vector<std::thread> threads;
+    std::priority_queue<Task, std::vector<Task>, std::greater<Task>> tasks;
+    std::queue<Task> tasks_1;
+    std::mutex mutex;
+    std::mutex mutex_1;
+    std::condition_variable condition;
+    std::condition_variable condition_1;
+    bool stop;
+};
+
+void taskFunction(int id, int time) {
+    std::unique_lock<std::mutex> lock(mut);
+    std::cout << "Task " << id << " started with time " << time << " seconds" << std::endl;
+    lock.unlock();
+
+    std::this_thread::sleep_for(std::chrono::seconds(time));
+
+    lock.lock();
+    std::cout << "Task " << id << " finished" << std::endl;
+    lock.unlock();
+}
+
+void filling_queue(ThreadPool* pool, int num_work, std::mt19937& generator) {
+    for (int i = 0; i < num_work; ++i) {
+        std::chrono::seconds time(5);
+        if (i > num_work / 2)
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+        pool->enqueue(time, taskFunction, i, time.count());
+    }
+}
+
+int main() {
+    ThreadPool pool(3, 1);
+    std::mt19937 generator((unsigned int)std::chrono::system_clock::now().time_since_epoch().count());
+    std::thread mythread(filling_queue, &pool, 20, std::ref(generator));
+    mythread.join();
+
+    return 0;
+}
+
+
